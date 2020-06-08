@@ -7,15 +7,133 @@ The objective of this activity is to explore basic hierarchical models.  We will
 
 # Case Study: Mosquito population size
 
-For this activity we will look at data on mosquito abundance.  The data file “Mosquito.csv” contains ten years worth of data for each of 5 replicate traps (Reminder: the function read.csv can be used to read comma-separated text files).   We will begin with the simplest possible model to explain this data and incrementally add complexity.
+For this activity we will look at data on mosquito abundance.  The data file “Mosquito.csv” contains ten years worth of data for each of 5 replicate traps.   We will begin with the simplest possible model to explain this data and incrementally add complexity.
+
+```{r}
+dat <- read.csv("data/Mosquito.csv",header=TRUE,as.is = TRUE)
+```
 
 ### Task 1: 
 
 1.  Plot mosquito abundance as a function of time in a way that distinguishes the replicates and connects them through time (e.g. with lines, colors, or symbols)
 
-2.	Write and run a JAGS model to fit the overall mean and standard deviation, reporting summary statistics for both. You can use the JAGS code you developed from activity 5 for this.
+```{r}
+library(tidyverse)
+
+ggplot(data = dat) +
+  geom_line(aes(x=as.factor(as.character(time)), y = density, group = replicate))
+
+ggplot(data = dat,aes(x=as.factor(as.character(time)), y = density, group = replicate, color=as.factor(replicate))) +
+  geom_point() +
+  geom_line()
+```
+2.	Write and run a JAGS model to fit the overall "global" mean `mu` and standard deviation `sigma`, reporting summary statistics for both. You can use the JAGS code you developed from activity 5 for this.
+
+Define JAGS model:
+
+```{r}
+global_mean <- "
+model {
+  
+  mu ~ dnorm(mu0,tau) # prior on global mean
+  S ~ dgamma(0.1,0.1)
+  
+  for(i in 1:N){
+    y[i] ~ dnorm(mu,S) # data model
+  }
+}
+"
+```
+
+```{r}
+library(rjags)
+
+mean(dat$density);
+sd(dat$density);
+
+library(tidybayes)
+
+data <- list(y = dat$density,
+             N = nrow(dat),
+             mu0 = 0,
+             tau = 0.0001)
+
+# initials
+nchain = 3
+inits <- list()
+for(i in 1:nchain){
+  inits[[i]] <- list(S = runif(1, 1/200,1/20))
+}
+
+j.globalMean <- jags.model(file = textConnection(global_mean),
+                           data=data,
+                           inits= inits,
+                           n.adapt = 5000,
+                           n.chains = 3)
+
+norm.out <- coda.samples( model = j.globalMean,
+                          variable.names = c("mu","S"),
+                          n.iter = 10000)
+
+
+```
+
+```{r}
+burnin = 2000
+norm.burn <- window(norm.out, start=burnin)
+effectiveSize(norm.burn)
+plot(norm.burn)
+summary(norm.burn)
+```
 
 3.	Add posterior CI and PI to the plot.
+
+Begin by sampling from the posterior.
+
+```{r}
+norm.mat <- as.matrix(norm.out)
+```
+
+
+```{r}
+## credible and prediction intervals
+nsamp <- 5000
+samp <- sample.int(nrow(norm.mat),nsamp)
+xpred <- unique(dat$time)   					## sequence of x values we're going to
+npred <- length(xpred)				##      make predictions for
+ypred <- matrix(0.0,nrow=nsamp,ncol=npred)	## storage for predictive interval
+ycred <- matrix(0.0,nrow=nsamp,ncol=npred)	## storage for credible interval
+```
+
+Next we'll set up a loop where we'll calculate the expected value of y at each x for each pair of regression parameters and then add additional random error from the data model.  When looping through the posterior MCMC we'll obviously want to account for any burn-in period and thinning 
+
+```{r}
+for(g in seq_len(nsamp)){
+  post = norm.mat[samp[g],]
+  ycred[g,] <- post["mu"]
+  ypred[g,] <- rnorm(npred,ycred[g,],1/sqrt(post["S"]))
+  #ycred[g,] <- theta["beta[1]"] + theta["beta[2]"]*xpred
+  #ypred[g,] <- rnorm(npred,ycred[g,],1/sqrt(theta["prec"]))
+}
+```
+
+Once we have the full matrix of predicted values we'll calculate the quantiles by column (ie for each x value) and then plot them vs. the data.  By selecting the 2.5% and 97.5% quantiles we are generating a 95% interval, because 95% of the calculated values fall in the middle and 2.5% fall in each of the upper and lower tails.  We could construct alternative interval estimates by just calculating different quantiles, for example the 5% and 95% quantiles would provide a 90% interval estimate. 
+
+```{r}
+ci <- apply(ycred,2,quantile,c(0.025,0.5,0.975))  ## credible interval and median
+pi <- apply(ypred,2,quantile,c(0.025,0.975))		## prediction interval
+
+ci <- data.frame(time = unique(dat$time),t(ci))
+pi <- data.frame(time = unique(dat$time),t(pi))
+
+ggplot() +
+  geom_point(data = dat, aes(x=as.factor(as.character(time)), y = density, group = replicate)) +
+  geom_line(data= ci, aes(x=as.factor(as.character(time)), y = X2.5.,group=1),linetype='dotted')+
+  geom_line(data= ci, aes(x=as.factor(as.character(time)), y = X97.5.,group=1),linetype='dotted') +
+  geom_line(data=pi, aes(x=as.factor(as.character(time)), y = X2.5.,group=1),linetype='dashed') +
+  geom_line(data= pi, aes(x=as.factor(as.character(time)), y = X97.5.,group=1),linetype='dashed')
+
+```
 
 # Random time effect
 
@@ -25,37 +143,201 @@ To add the random year effect:
 
 1. Add the random year effect to the process model.
 ```
-for(t in 1:NT){
- Ex[t] <- mu + alpha_t[t]		  ## process model (does not vary with rep)
- alpha_t[t] ~ dnorm(0,tau_t)  ## random year effect
+Ex[i] <- mu + alpha.t[time[i]]		## process model (varies with time but not rep)
+```
+Note that the version above is formatted slightly differently from the version covered in the lecture slides. In the lecture, the data were in a wide format, `x[t,b,i]`, where time, block, and individual were different dimensions in an array. Alternatively, one can format data in a long format, like we see in this file, with time and replicate as columns
+```{r}
+head(dat)
+```
+The variable `time` used in the code above is a vector of indices (length = nrow(dat)) matching a specific row of data to a specific `alpha.t`. Therefore, when building the `data` list that you pass into `jags.model` you'll want to add `time` and have that vector contain values in the range from 1 to 10 instead of 1995-2004. When working with long data, the easiest way to do this is to convert a column to a factor, then from a factor to an integrer
+```{r}
+dat$time.vector <- as.integer(as.factor(dat$time))
+```
+
+2. Update the data model to reference `Ex[t]` instead of `mu`
+
+3. Add the random year effect parameter model (within a loop over time)
+```
+for(t in 1:nt){
+  alpha.t[t] ~ dnorm(0,tau.t)		## random year effect
 }
 ```
-In this chunk of code the expected value of the data X, `Ex`, varies with time, `t`, but not replicate, and thus NT is the number of years not the length of the overall dataset. In the process model `mu` is the overall 'global' mean and `alpha_t` is the deviation of a particular year from that overall mean (which is why the distribution of alphas has a mean 0). The random effect precision, `tau_t`, describes the year-to-year variability in the mean. 
 
-2. Because we're fitting this model hierarchically, `tau_t` is an unknown that is estimated from the data. Therefore, you need to add a prior on `tau_t`, the unknown year-to-year variability that we're trying to estimate. Note: If `tau_t` were simply a prescibed constant this would correspond to setting a prior on the `alpha_t`s, which would then be **fixed** effects rather than random effects
-
-3. Update the data model to reference the process model, `Ex[time[i]]`, instead of `mu`. Here we're assuming `i` is the counter in the loop over all the rows in the data and that `time` is an indexing variable used to look up the year for that particular row in the data. For example, if I loaded the raw data as `dat` this could be calculated as `time <- as.numeric(as.factor(dat$time))``
-
-4. When defining your `data` list to pass to JAGS, make sure to include the observed data, the indexing variable `time`, and any constants being used to define priors and the size of data sets (e.g. `N` and `NT`).
+4. Add a prior on `tau.t`, the year-to-year variability
 
 5. When sampling from your posteriors, make sure to track all of your unknown parameters: 
  + `mu` - global mean
+ + `sigma` - residual error (inverse of $tau$)
  + `alpha_t` - random year effect
- + `S` - residual precision
  + `tau_t` - year-to-year precision
-
 
 ### Task 2
 
 4.  Fit the random-time model and turn in a plot like in Task 1 with the posterior CI and PI plotted against the data.
+
+Update the JAGS model with the notes from the section above. As noted in the notes above, the notation here is different than from the powerpoint.
+
+```{r}
+partial_pooling <- "
+model {
+  
+  mu ~ dnorm(0,0.001)   ## prior
+  tau ~ dgamma(0.001,0.001) ## prior
+  
+  tau.t ~ dgamma(0.001, 0.001) ## hyperprior
+  for(t in 1:nt){
+  alpha.t[t] ~ dnorm(0,tau.t)		## random year effect
+  }
+
+  for(i in 1:N){
+    Ex[i] <- mu + alpha.t[time[i]]		## process model (varies with time but not rep)
+    y[i] ~ dnorm(Ex[i],tau) # data model
+  }
+}
+"
+```
+
+```{r}
+library(rjags)
+library(tidybayes)
+
+data <- list(y = dat$density,
+             N = nrow(dat),
+             time = dat$time.vector,
+             nt = max(dat$time.vector))
+
+# initials
+nchain = 3
+inits <- list()
+for(i in 1:nchain){
+  inits[[i]] <- list(tau = runif(1, 1/200,1/20))
+}
+
+j.partialPooling <- jags.model(file = textConnection(partial_pooling),
+                           data=data,
+                           inits= inits,
+                           n.adapt = 5000,
+                           n.chains = 3)
+
+out <- coda.samples( model = j.partialPooling,
+                          variable.names = c("mu","alpha.t","tau","tau.t"),
+                          n.iter = 10000)
+```
+
+```{r}
+burnin = 2000
+out.burn <- window(out, start=burnin)
+effectiveSize(out.burn)
+plot(out.burn)
+summary(out.burn)
+
+library(runjags)
+MCMCvis::MCMCsummary(out.burn)
+```
+
+Begin by sampling from the posterior.
+
+```{r}
+jags.out <- out
+
+jags.mat <- as.matrix(jags.out)
+sel.a <- grep("alpha",colnames(jags.mat))
+plot(jags.out[,sel.a])
+summary(jags.out[,sel.a])
+alpha <- jags.mat[,sel.a]
+apply(alpha,2,mean)
+
+```
+
+
+```{r}
+## credible and prediction intervals
+nsamp <- 5000
+samp <- sample.int(nrow(jags.mat),nsamp)
+xpred <- unique(dat$time)   					## sequence of x values we're going to
+npred <- length(xpred)				##      make predictions for
+ypred <- matrix(0.0,nrow=nsamp,ncol=npred)	## storage for predictive interval
+ycred <- matrix(0.0,nrow=nsamp,ncol=npred)	## storage for credible interval
+```
+
+Next we'll set up a loop where we'll calculate the expected value of y at each x for each pair of regression parameters and then add additional random error from the data model.  When looping through the posterior MCMC we'll obviously want to account for any burn-in period and thinning 
+
+```{r}
+for(g in seq_len(nsamp)){
+  post = jags.mat[samp[g],]
+  ycred[g,] <- post["mu"] + post[grep("alpha.t" , names(post))]
+  ypred[g,] <- rnorm(npred,ycred[g,],1/sqrt(post["tau"]))
+}
+```
+
+Once we have the full matrix of predicted values we'll calculate the quantiles by column (ie for each x value) and then plot them vs. the data.  By selecting the 2.5% and 97.5% quantiles we are generating a 95% interval, because 95% of the calculated values fall in the middle and 2.5% fall in each of the upper and lower tails.  We could construct alternative interval estimates by just calculating different quantiles, for example the 5% and 95% quantiles would provide a 90% interval estimate. 
+
+```{r}
+ci <- apply(ycred,2,quantile,c(0.025,0.5,0.975))  ## credible interval and median
+pi <- apply(ypred,2,quantile,c(0.025,0.975))		## prediction interval
+
+ci <- data.frame(time = unique(dat$time),t(ci))
+pi <- data.frame(time = unique(dat$time),t(pi))
+
+ggplot() +
+  geom_point(data = dat, aes(x=as.factor(as.character(time)), y = density, group = replicate)) +
+  geom_line(data= ci, aes(x=as.factor(as.character(time)), y = X2.5.,group=1),linetype='dotted')+
+  geom_line(data= ci, aes(x=as.factor(as.character(time)), y = X50.,group=1),linetype='solid')+
+    geom_line(data= ci, aes(x=as.factor(as.character(time)), y = X97.5.,group=1),linetype='dotted') +
+  geom_line(data=pi, aes(x=as.factor(as.character(time)), y = X2.5.,group=1),linetype='dashed') +
+  geom_line(data= pi, aes(x=as.factor(as.character(time)), y = X97.5.,group=1),linetype='dashed')
+
+```
+
 Hint: once you convert the JAGS coda object to a matrix, you can use `grep` to figure out which columns contain alphas: 
 ```
 jags.mat <- as.matrix(jags.out)
-alpha <- jags.mat[,grep("alpha",colnames(jags.mat))]
+sel.a <- grep("alpha",colnames(jags.mat))
+plot(jags.out[,sel.a])
+summary(jags.out[,sel.a])
+alpha <- jags.mat[,sel.a]
+apply(alpha,2,mean)
 ```
-5.	Based on the posterior mean estimates from this model, how much of the variance in the mosquito densities is explained by the year effects? Which parameters (and from which models) do you need to look at to assess this?
+5.	Looking at the posterior estimates for tau and sigma, how much of the variance in the mosquito densities is explained by the year effects? 
+
+```{r}
+library(runjags)
+MCMCvis::MCMCsummary(out.burn)
+
+prec <- MCMCvis::MCMCchains(out.burn,params=c("tau","tau.t"))
+vars <-1/apply(prec,2,quantile,probs=c(0.025,.5,.975))
+vars
+```
+If I've done this correctly, the year effects explain roughly equal amounts of variation in the dataset. But I'm not sure how to get from here to interpreting how much of the total variance is explained by the year effects. 
 
 6. Describe how you would modify your code to add a random `replicate` effect.
+
+To add a random `replicate` effect, I would add another term to the linear predictor. The JAGS code for the model would look like this:
+
+```{r}
+partial_pooling2 <- "
+model {
+  
+  mu ~ dnorm(0,0.001)   ## prior
+  tau ~ dgamma(0.001,0.001) ## prior
+  
+  tau.t ~ dgamma(0.001, 0.001) ## hyperprior
+  for(t in 1:nt){
+  alpha.t[t] ~ dnorm(0,tau.t)		## random year effect
+  }
+  
+  tau.b ~ dgamma(0.001, 0.001) ## hyperprior
+  for(b in 1:nb){
+  alpha.b[b] ~ dnorm(0,tau.b)		## random year effect
+  }
+
+  for(i in 1:N){
+    Ex[i] <- mu + alpha.t[time[i]] + alpha.b[replicate[i]]		## process model (varies with time but not rep)
+    y[i] ~ dnorm(Ex[i],tau) # data model
+  }
+}
+"
+```
 
 # Combining Linear and Random Effects
 

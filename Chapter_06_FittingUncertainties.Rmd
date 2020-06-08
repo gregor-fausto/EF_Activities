@@ -8,19 +8,22 @@ The objective of this activity is to apply the techniques from Chapter 6 about w
 ## Case Study:  Seedling Recruitment and Soil Moisture
 
 In this analysis we'll consider the relationship between soil moisture and seedling densities.  The response data (y) in this analysis consists of counts of seedlings in 1m x 1m plots.  Soil moisture was measured using Time Domain Reflectometry (TDR), a technique where two metal rods are inserted into the ground and an electrical pulse is sent down one rod and measured on the other.  The TDR technique actually measures soil impedance, not soil moisture, but soil moisture can be estimated based on empirical calibrations against gravimetric soil moisture measurements (difference between wet and dry weight of soil cores).  TDR has the advantage of being much less labor intensive and non-destructive than gravimetric measurement, which permits repeated measurements of the same plots.
-  The Poisson distribution is a natural choice for modeling the seedling count data because the data is both discrete and lacking a defined upper bound.  Since we are interested in the relationship between seedling density and a covariate, soil moisture, we'll make use of the Generalized Linear Models (GLM) framework for fitting a Poisson regression.  As a link function, lets start with the standard choice of a log link.
+
+The Poisson distribution is a natural choice for modeling the seedling count data because the data is both discrete and lacking a defined upper bound.
+
+Since we are interested in the relationship between seedling density and a covariate, soil moisture, we'll make use of the Generalized Linear Models (GLM) framework for fitting a Poisson regression.  As a link function, lets start with the standard choice of a log link.
  
-$$log(\mu) = \beta_0 + \beta_1 TDR$$
-$$y \sim Pois(\mu)$$
+$$ log(\mu) = \beta_0 + \beta_1 TDR $$
+$$ y \sim Pois(\mu) $$
  
 The data for this analysis are provided to you as a Rdata object that contains the following variables:
 
-	n – sample size
-	y – seedling counts (individuals/m2)
-	TDR – raw output from the TDR unit (arbitrary units) for each seedling plot
-	TDRc – raw TDR output for the calibration samples
-	SMc – Volumetric soil moisture measurements for the calibration samples (m3/m3)
-	SMseq – a sequence of soil moisture values used for prediction
+*	n – sample size
+*	y – seedling counts (individuals/m2)
+*	TDR – raw output from the TDR unit (arbitrary units) for each seedling plot
+*	TDRc – raw TDR output for the calibration samples
+*	SMc – Volumetric soil moisture measurements for the calibration samples (m3/m3)
+*	SMseq – a sequence of soil moisture values used for prediction
 
 ```{r, echo=FALSE}
 load("data/Ch06.RData")
@@ -47,6 +50,111 @@ Normally JAGS doesn't let functions be on the left-hand side of an <- but the _l
 * Modify the data model to be _dpois_ instead of _dnorm_
  
 ### Task 1: 
+
+I copied the `univariate_regression` from *Exercise 05B*.
+
+```{r}
+univariate_regression <- "
+model{
+
+  beta ~ dmnorm(b0,Vb)  	## multivariate Normal prior on vector of regression params
+
+  for(i in 1:n){
+    log(mu[i]) <- beta[1]+beta[2]*TDR[i]     ## process model
+	  y[i]  ~ dnorm(mu[i],prec)		        ## data model
+  }
+}
+"
+```
+
+I copied the priors.
+
+```{r}
+## specify priors
+data$b0 <- as.vector(c(0,0))      ## regression beta means
+data$Vb <- solve(diag(10000,2))   ## regression beta precisions
+data$s1 <- 0.1                    ## error prior n/2
+data$s2 <- 0.1                    ## error prior SS/2
+```
+
+I copied the initial conditions.
+
+```{r}
+## initial conditions
+nchain = 3
+inits <- list()
+for(i in 1:nchain){
+ inits[[i]] <- list(beta = rnorm(2,0,5), prec = runif(1,1/100,1/20))
+}
+```
+
+I copied the model fitting code:
+
+```{r}
+j.model   <- jags.model(file = textConnection(univariate_regression),
+                             data = data,
+                             inits = inits,
+                             n.chains = nchain)
+```
+
+And then we'll use the coda.samples function to sample from the posterior
+
+```{r}
+var.out   <- coda.samples (model = j.model,
+                            variable.names = c("beta","prec"),
+                                n.iter = 2000)
+```
+
+Some diagnostics.
+
+```{r}
+## remember to assess convergence and remove burn-in before doing other diagnostics
+GBR <- gelman.plot(var.out)
+
+## convert to matrix
+var.mat      <- as.matrix(var.out)
+
+## Pairwise scatter plots & correlation
+pairs(var.mat)	## pairs plot to evaluate parameter correlation
+cor(var.mat)    ## correlation matrix among model parameters
+```
+
+Now CI and PI:
+
+```{r}
+## credible and prediction intervals
+nsamp <- 5000
+samp <- sample.int(nrow(var.mat),nsamp)
+xpred <- 0:20  					## sequence of x values we're going to
+npred <- length(xpred)				##      make predictions for
+ypred <- matrix(0.0,nrow=nsamp,ncol=npred)	## storage for predictive interval
+ycred <- matrix(0.0,nrow=nsamp,ncol=npred)	## storage for credible interval
+```
+
+Next we'll set up a loop where we'll calculate the expected value of y at each x for each pair of regression parameters and then add additional random error from the data model.  When looping through the posterior MCMC we'll obviously want to account for any burn-in period and thinning 
+
+```{r}
+for(g in seq_len(nsamp)){
+  theta = var.mat[samp[g],]
+  ycred[g,] <- theta["beta[1]"] + theta["beta[2]"]*xpred
+  ypred[g,] <- rnorm(npred,ycred[g,],1/sqrt(theta["prec"]))
+}
+```
+
+Once we have the full matrix of predicted values we'll calculate the quantiles by column (ie for each x value) and then plot them vs. the data.  By selecting the 2.5% and 97.5% quantiles we are generating a 95% interval, because 95% of the calculated values fall in the middle and 2.5% fall in each of the upper and lower tails.  We could construct alternative interval estimates by just calculating different quantiles, for example the 5% and 95% quantiles would provide a 90% interval estimate. 
+
+```{r}
+ci <- apply(ycred,2,quantile,c(0.025,0.5,0.975))  ## credible interval and median
+pi <- apply(ypred,2,quantile,c(0.025,0.975))		## prediction interval
+
+plot(x1,y,cex=0.5,xlim=c(0,20),ylim=c(0,50))
+lines(xpred,ci[1,],col=3,lty=2)	## lower CI
+lines(xpred,ci[2,],col=3,lwd=3)	## median
+lines(xpred,ci[3,],col=3,lty=2)	## upper CI
+lines(xpred,pi[1,],col=4,lty=2)	## lower PI
+lines(xpred,pi[2,],col=4,lty=2)	## upper PI
+abline(b0,b1)				## true model
+```
 
 1.  Fit the Bayesian Poisson regression model. Provide the DIC, and summary table & posterior density plots for all model parameters.  Report the burn in and effective MCMC sample size.
 2.	Plot the model credible interval and predictive interval.  Be sure to include the scatterplot of the observed data.
