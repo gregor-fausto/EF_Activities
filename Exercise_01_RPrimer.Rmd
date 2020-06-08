@@ -11,11 +11,11 @@ The objective of today's hands-on activity is to provide a basic overview of R. 
 
 ## Assignment
 
-For this activity you will turn in a Rmd file (prefered) or R Script file that shows your work. If you turn in a Rmd file, you should check that the code "knits" before submitting!
+For this activity you will turn in a Rmd file (preferred) or R Script file that shows your work. If you turn in a Rmd file, you should check that the code "knits" before submitting!
 
 ## About R
 
-The R software we are using this semester is open-source statistical software that has gained rapid popularity because of its power and flexibility.  In addition, there are a large number of “packages” for R that have been written by users and are freely downloadable from [CRAN](http://cran.us.r-project.org/) (Comprehensive R Archive Network).  Individual packages do everything from allowing R to interface with supercomputers to solving sudoku puzzles.  They contain most every classical statistical test you're likely to come across as well as interfaces that allow R to interact with a large number of other programs and software libraries.  Unlike many pieces of software you may be familiar with, R is a scripting language.  Usually you will be using R “interactively” which means that the basic mode of operation is to type commands at a command prompt and have it spit back a result, which you'll often want to cut-and-paste elsewhere.  R can also be run in “batch” mode, whereby a file containing a list of R commands is run all at once.  This mode is particularly useful for large analyses that take a long time to run because batch jobs can be submitted to computer clusters.
+The R software we are using this semester is open-source statistical software that has gained rapid popularity because of its power and flexibility.  In addition, there are a large number of “packages” for R that have been written by users and can be freely downloaded from [CRAN](http://cran.us.r-project.org/) (Comprehensive R Archive Network).  Individual packages do everything from allowing R to interface with supercomputers to solving Sudoku puzzles.  They contain most every classical statistical test you're likely to come across as well as interfaces that allow R to interact with a large number of other programs and software libraries.  Unlike many pieces of software you may be familiar with, R is a scripting language.  Usually you will be using R “interactively” which means that the basic mode of operation is to type commands at a command prompt and have it spit back a result, which you'll often want to cut-and-paste elsewhere.  R can also be run in “batch” mode, whereby a file containing a list of R commands is run all at once.  This mode is particularly useful for large analyses that take a long time to run because batch jobs can be submitted to computer clusters.
 
 ## Getting this exercise
 
@@ -40,7 +40,7 @@ git config -–global user.email “your.email@gmail.com”
 ```
   + You can now close this Shell window
   
-The bestest way to get a copy of this exercise, and all the other EcoForecast exercises, is to click on the project pull-down menu in the top-right corner of RStudio and select "New Project...".  
+The best way to get a copy of this exercise, and all the other EcoForecast exercises, is to click on the project pull-down menu in the top-right corner of RStudio and select "New Project...".  
 
 Next, click "Version Control" and then "Git".
 
@@ -158,8 +158,73 @@ g.	How does R represent when the output of a function is not a number?
 6.	If a population starts with a density of 5 individuals/hectare and grows exponentially at a growth rate r=0.04/year, what is the size of the population in π years? (show code)
 7.	Subtract the month you were born from the remainder left after you divide the year you were born by the day you were born (show code)
 ```
+#### Question 1
+```{r}
+### a
+log(1)
 
+### b
+log(1)
 
+### c
+log(exp(1))
+
+### d
+log(-5)
+
+### e
+-log(5)
+
+### f
+log(1/5)
+
+```
+When the output of a function is not a number, R represents the output as `NaN`.
+
+#### Question 2
+```Why are we multiplying the results of the atan and atan2 functions by 180/pi? ```
+
+The functions `atan` and `atan2` return values in radians. We multiply by `180/pi` to return values in degrees.
+
+#### Question 3
+```How is the atan2 function different from the atan function?```
+
+The `atan` function takes one value: ... The `atan2` funtion takes two values: the (x,y) position of a point.
+
+#### Question 4
+```What is the difference between log and log10?```
+
+The function `log` computes the natural logarithm (base e), while `log10` computes the common logarithm (base 10).
+
+#### Question 5
+```Given a right triangle with sides x = 5 and y = 13, calculate the length of the hypotenuse (show code)```
+
+```{r}
+f = function(x,y){ return(sqrt(x^2+y^2))}
+f(x=5,y=13)
+```
+
+#### Question 6
+```If a population starts with a density of 5 individuals/hectare and grows exponentially at a growth rate r=0.04/year, what is the size of the population in π years? (show code)```
+
+```{r}
+f = function(N0,r,t){ 
+  Nt = N0*exp(r*t)  
+  return(Nt)
+}
+f(N0=5,r=0.04,t=pi)
+```
+
+#### Question 7
+```Subtract the month you were born from the remainder left after you divide the year you were born by the day you were born (show code)```
+
+```{r}
+f = function(day,month,year){ 
+  y = (year %% day) - month
+  return(y)
+}
+f(day = 30, month = 3, year = 1991)
+```
 ## R Scripts
 
 Now click on File>New>R Script to open up a script window.  It is often useful to work on R from a script window because it provides a record of what you did in your analysis and can be reused for similar analyses.  It is particularly essential for more complicated analyses.  In the script window type
